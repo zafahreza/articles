@@ -1,0 +1,130 @@
+version: '3.5'
+
+
+services:
+  post-app:
+    build:
+      context: .
+      dockerfile: ./command/Dockerfile
+    container_name: articles-post-app
+    restart: always
+    environment:
+      POSTGRES_HOST: articles-postgres
+      RABBITMQ_HOST: articles-rabbitmq
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/code
+    depends_on:
+      - postgres
+      - rabbitmq
+    networks:
+      - article-net
+
+  get-app:
+    build:
+      context: .
+      dockerfile: ./query/Dockerfile
+    container_name: articles-get-app
+    restart: always
+    environment:
+      RABBITMQ_HOST: articles-rabbitmq
+      ELASTICSEARCH_URL: http://articles-elasticsearch:9200
+      REDIS_HOST: articles-redis
+    ports:
+      - "3001:3001"
+    volumes:
+      - .:/code
+    depends_on:
+      - post-app
+      - elasticsearch
+      - rabbitmq
+      - redis
+    networks:
+      - article-net
+
+  postgres:
+    image: postgres:15.1-alpine
+    container_name: articles-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: article_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - article-net
+
+  rabbitmq:
+    image: rabbitmq:3.8.14-management-alpine
+    container_name: articles-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq/
+      - rabbitmq-data:/var/log/rabbitmq
+    networks:
+      - article-net
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.4.0
+    container_name: articles-elasticsearch
+    environment:
+      - xpack.security.enabled=false
+      - discovery.type=single-node
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - article-net
+
+  redis:
+    container_name: articles-redis
+    image: redis:6
+    command: redis-server /usr/local/etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    networks:
+      - article-net
+
+  reverse-proxy:
+    image: nginx:1.23.3-alpine
+    container_name: articles-nginx
+    restart: always
+    depends_on:
+      - post-app
+      - get-app
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    ports:
+      - "80:80"
+    networks:
+      - article-net
+
+volumes:
+  elasticsearch-data:
+    driver: local
+  rabbitmq-data:
+    driver: local
+  postgres-data:
+    driver: local
+
+networks:
+  article-net:
+    driver: bridge
